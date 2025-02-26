@@ -228,11 +228,14 @@ export default function App() {
       const rightHip = results.poseLandmarks[24];
       const leftKnee = results.poseLandmarks[25];
       const rightKnee = results.poseLandmarks[26];
+      const leftAnkle = results.poseLandmarks[27];
+      const rightAnkle = results.poseLandmarks[28];
 
-      if (!leftHip || !rightHip || !leftKnee || !rightKnee) return;
+      if (!leftHip || !rightHip || !leftKnee || !rightKnee || !leftAnkle || !rightAnkle) return;
 
       const hipY = (leftHip.y + rightHip.y) / 2;
       const kneeY = (leftKnee.y + rightKnee.y) / 2;
+      const ankleY = (leftAnkle.y + rightAnkle.y) / 2;
 
       // Calibration phase
       if (squatState.current.isCalibrating) {
@@ -250,21 +253,30 @@ export default function App() {
       const now = Date.now();
       const timeSinceLastSquat = now - squatState.current.lastSquatTime;
 
-      // Check knee position relative to hips for proper form
-      const kneeHipDiff = Math.abs(kneeY - hipY);
-      const properForm = kneeHipDiff > 0.1;
+      // Calculate distances for form checking
+      const hipToKnee = Math.abs(hipY - kneeY);
+      const kneeToAnkle = Math.abs(kneeY - ankleY);
+      
+      // Check if knees are bent and form is good
+      const properForm = hipToKnee > 0.15 && kneeToAnkle > 0.1;
+      const hipDropAmount = hipY - squatState.current.startY;
 
-      // Detect squat phases
+      // More sensitive thresholds
+      const SQUAT_DOWN_THRESHOLD = 0.2;    // How low to go for squat
+      const SQUAT_UP_THRESHOLD = 0.1;      // How high to come up to complete
+      const MIN_REP_TIME = 500;            // Minimum ms between reps
+
+      // Detect squat phases with stricter conditions
       if (!squatState.current.isInSquat && 
-          hipY > squatState.current.startY + SQUAT_SETTINGS.THRESHOLD && 
+          hipDropAmount > SQUAT_DOWN_THRESHOLD && 
           properForm) {
-        console.log('Entering squat');
+        console.log('Entering squat', hipDropAmount);
         squatState.current.isInSquat = true;
       }
       else if (squatState.current.isInSquat && 
-               hipY < squatState.current.startY + (SQUAT_SETTINGS.THRESHOLD / 2) && 
-               timeSinceLastSquat > SQUAT_SETTINGS.MIN_REP_TIME) {
-        console.log('Completing squat');
+               hipDropAmount < SQUAT_UP_THRESHOLD && 
+               timeSinceLastSquat > MIN_REP_TIME) {
+        console.log('Completing squat', hipDropAmount);
         squatState.current.isInSquat = false;
         squatState.current.lastSquatTime = now;
         setExerciseCount(prev => prev + 1);
