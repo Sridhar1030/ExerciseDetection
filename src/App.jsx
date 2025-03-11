@@ -78,14 +78,29 @@ export default function App() {
   // Add state for current pose
   const [currentPose, setCurrentPose] = useState("No pose detected");
 
-  // Get available cameras
+  // Add a new state for error messages
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // Improve the camera detection code
   useEffect(() => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      setErrorMessage('Camera API not supported in your browser or requires HTTPS');
+      return;
+    }
+
+    // Clear any previous errors
+    setErrorMessage('');
+    
     navigator.mediaDevices.enumerateDevices()
       .then(devices => {
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
         setDevices(videoDevices);
-        if (videoDevices.length > 0) {
+        
+        if (videoDevices.length === 0) {
+          setErrorMessage('No camera detected. Please connect a camera and refresh.');
+        } else {
           setSelectedDevice(videoDevices[0].deviceId);
+          console.log('Cameras detected:', videoDevices.length);
         }
       })
       .catch(err => console.error('Error getting devices:', err));
