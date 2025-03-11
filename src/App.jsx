@@ -250,7 +250,7 @@ export default function App() {
             border: '2px solid #333'
           }}
         >
-          {/* Video with object-fit: contain */}
+          {/* Video with transform to un-mirror */}
           <video
             ref={videoRef}
             style={{ 
@@ -258,13 +258,14 @@ export default function App() {
               width: '100%', 
               height: '100%',
               objectFit: 'contain',
-              backgroundColor: '#000'
+              backgroundColor: '#000',
+              transform: 'scaleX(-1)'
             }}
             muted
             playsInline
           />
           
-          {/* Canvas overlay */}
+          {/* Canvas with matching transform */}
           <canvas
             ref={canvasRef}
             style={{
@@ -273,7 +274,8 @@ export default function App() {
               left: 0,
               width: '100%',
               height: '100%',
-              zIndex: 999
+              zIndex: 999,
+              transform: 'scaleX(-1)'
             }}
           />
         </div>
