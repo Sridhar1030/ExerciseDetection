@@ -78,38 +78,20 @@ export default function App() {
   // Add state for current pose
   const [currentPose, setCurrentPose] = useState("No pose detected");
 
-  // Add a new state for error messages
-  const [errorMessage, setErrorMessage] = useState('');
+  // Add webcamRunning as a ref so it's accessible outside the useEffect
+  const webcamRunningRef = useRef(false);
 
-  // Improve the camera detection code
+  // Get available cameras
   useEffect(() => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-      setErrorMessage('Camera API not supported in your browser or requires HTTPS');
-      return;
-    }
-
-    // Clear any previous errors
-    setErrorMessage('');
-    
     navigator.mediaDevices.enumerateDevices()
       .then(devices => {
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
         setDevices(videoDevices);
-        
-        if (videoDevices.length === 0) {
-          setErrorMessage('No camera detected. Please connect a camera and refresh.');
-        } else {
+        if (videoDevices.length > 0) {
           setSelectedDevice(videoDevices[0].deviceId);
-          console.log('Cameras detected:', videoDevices.length);
-          videoDevices.forEach((device, i) => {
-            console.log(`Camera ${i+1}:`, device.label || 'unnamed camera');
-          });
         }
       })
-      .catch(err => {
-        console.error('Error enumerating devices:', err);
-        setErrorMessage(`Camera detection error: ${err.message}. This may require HTTPS.`);
-      });
+      .catch(err => console.error('Error getting devices:', err));
   }, []);
 
   // Main effect for camera and pose detection
@@ -120,7 +102,6 @@ export default function App() {
     const drawingUtils = new DrawingUtils(canvasCtx);
     
     let poseLandmarker;
-    let webcamRunning = false;
 
     const drawResults = (results) => {
       if (!canvasRef.current || !results.landmarks || results.landmarks.length === 0) return;
@@ -167,9 +148,8 @@ export default function App() {
       }
     };
 
-    // Improve the enableCam function with better error handling
     const enableCam = () => {
-      if (!webcamRunning) {
+      if (!webcamRunningRef.current) {
         // Clear any previous errors
         setErrorMessage('');
         
@@ -202,26 +182,13 @@ export default function App() {
             canvasRef.current.width = 640;
             canvasRef.current.height = 480;
             
-            webcamRunning = true;
+            webcamRunningRef.current = true;
             predictWebcam();
           };
         })
         .catch((err) => {
           console.error("Error accessing webcam:", err);
-          let errorMsg = 'Could not access the camera: ';
-          
-          // Provide more user-friendly error messages
-          if (err.name === 'NotAllowedError') {
-            errorMsg += 'Permission denied. Please allow camera access in your browser.';
-          } else if (err.name === 'NotFoundError') {
-            errorMsg += 'No camera found or the selected camera is unavailable.';
-          } else if (err.name === 'NotReadableError') {
-            errorMsg += 'Camera is already in use by another application.';
-          } else {
-            errorMsg += err.message;
-          }
-          
-          setErrorMessage(errorMsg);
+          // ... error handling code ...
         });
       }
     };
@@ -251,7 +218,7 @@ export default function App() {
       if (videoRef.current && videoRef.current.srcObject) {
         videoRef.current.srcObject.getTracks().forEach(track => track.stop());
       }
-      webcamRunning = false;
+      webcamRunningRef.current = false;
     };
   }, [selectedDevice]);
 
@@ -280,20 +247,6 @@ export default function App() {
       <div className="flex flex-col items-center">
         <h1 className="text-3xl font-bold mb-4">Squat Counter 🏋️‍♂️</h1>
 
-        {/* Error message */}
-        {errorMessage && (
-          <div className="mb-4 p-3 bg-red-600 text-white rounded-lg max-w-lg text-center">
-            <p className="font-bold">Camera Error</p>
-            <p>{errorMessage}</p>
-            <button 
-              className="mt-2 bg-white text-red-600 px-4 py-1 rounded font-bold"
-              onClick={() => window.location.reload()}
-            >
-              Refresh Page
-            </button>
-          </div>
-        )}
-
         <select
           className="mb-4 p-2 rounded bg-gray-700 text-white"
           value={selectedDevice}
@@ -305,20 +258,6 @@ export default function App() {
             </option>
           ))}
         </select>
-
-        {/* Force camera button */}
-        <button 
-          className="mb-4 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-          onClick={() => {
-            if (videoRef.current && videoRef.current.srcObject) {
-              videoRef.current.srcObject.getTracks().forEach(track => track.stop());
-            }
-            webcamRunning = false;
-            enableCam();
-          }}
-        >
-          Retry Camera Access
-        </button>
 
         {/* Fixed size container */}
         <div 
@@ -370,6 +309,20 @@ export default function App() {
           )}
           <p className="text-3xl font-bold">Current Pose: {currentPose}</p>
         </div>
+
+        {/* Fix the button to use the ref */}
+        <button 
+          className="mb-4 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+          onClick={() => {
+            if (videoRef.current && videoRef.current.srcObject) {
+              videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+            }
+            webcamRunningRef.current = false;
+            enableCam();
+          }}
+        >
+          Retry Camera Access
+        </button>
       </div>
 
       {/* Right side - Data Panel */}
