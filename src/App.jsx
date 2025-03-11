@@ -45,8 +45,6 @@ const POSE_LANDMARKS = {
 export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const [devices, setDevices] = useState([]);
-  const [selectedDevice, setSelectedDevice] = useState('');
   const [exerciseCount, setExerciseCount] = useState(0);
   const [detectionStatus, setDetectionStatus] = useState({
     face: false,
@@ -81,22 +79,9 @@ export default function App() {
   // Add webcamRunning as a ref so it's accessible outside the useEffect
   const webcamRunningRef = useRef(false);
 
-  // Get available cameras
-  useEffect(() => {
-    navigator.mediaDevices.enumerateDevices()
-      .then(devices => {
-        const videoDevices = devices.filter(device => device.kind === 'videoinput');
-        setDevices(videoDevices);
-        if (videoDevices.length > 0) {
-          setSelectedDevice(videoDevices[0].deviceId);
-        }
-      })
-      .catch(err => console.error('Error getting devices:', err));
-  }, []);
-
   // Main effect for camera and pose detection
   useEffect(() => {
-    if (!videoRef.current || !canvasRef.current || !selectedDevice) return;
+    if (!videoRef.current || !canvasRef.current) return;
 
     const canvasCtx = canvasRef.current.getContext('2d');
     const drawingUtils = new DrawingUtils(canvasCtx);
@@ -105,8 +90,6 @@ export default function App() {
 
     const drawResults = (results) => {
       if (!canvasRef.current || !results.landmarks || results.landmarks.length === 0) return;
-      
-      const canvasCtx = canvasRef.current.getContext('2d');
       
       // Clear with transparent background
       canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
@@ -150,35 +133,19 @@ export default function App() {
 
     const enableCam = () => {
       if (!webcamRunningRef.current) {
-        // Clear any previous errors
-        setErrorMessage('');
-        
-        // Check if we're on HTTPS or localhost (required for camera access)
-        const isSecureContext = window.isSecureContext || 
-                                window.location.hostname === 'localhost' || 
-                                window.location.hostname === '127.0.0.1';
-        
-        if (!isSecureContext) {
-          setErrorMessage('Camera access requires HTTPS. Please use a secure connection.');
-          return;
-        }
-        
-        console.log(`Attempting to access camera with ID: ${selectedDevice}`);
-        
+        // Simply request camera access without specifying a device
         navigator.mediaDevices.getUserMedia({ 
           video: { 
-            deviceId: selectedDevice ? { exact: selectedDevice } : undefined,
             width: { ideal: 640 },
             height: { ideal: 480 }
           } 
         })
         .then((stream) => {
-          console.log('Camera access granted');
           videoRef.current.srcObject = stream;
           videoRef.current.onloadedmetadata = () => {
             videoRef.current.play();
             
-            // Simply match the canvas to the container dimensions
+            // Set canvas dimensions
             canvasRef.current.width = 640;
             canvasRef.current.height = 480;
             
@@ -188,7 +155,6 @@ export default function App() {
         })
         .catch((err) => {
           console.error("Error accessing webcam:", err);
-          // ... error handling code ...
         });
       }
     };
@@ -220,7 +186,7 @@ export default function App() {
       }
       webcamRunningRef.current = false;
     };
-  }, [selectedDevice]);
+  }, []);
 
   // Function to group landmarks by body part
   const groupedLandmarks = {
@@ -247,17 +213,7 @@ export default function App() {
       <div className="flex flex-col items-center">
         <h1 className="text-3xl font-bold mb-4">Squat Counter 🏋️‍♂️</h1>
 
-        <select
-          className="mb-4 p-2 rounded bg-gray-700 text-white"
-          value={selectedDevice}
-          onChange={(e) => setSelectedDevice(e.target.value)}
-        >
-          {devices.map(device => (
-            <option key={device.deviceId} value={device.deviceId}>
-              {device.label || `Camera ${devices.indexOf(device) + 1}`}
-            </option>
-          ))}
-        </select>
+        {/* Remove the camera selection dropdown */}
 
         {/* Fixed size container */}
         <div 
@@ -310,7 +266,7 @@ export default function App() {
           <p className="text-3xl font-bold">Current Pose: {currentPose}</p>
         </div>
 
-        {/* Fix the button to use the ref */}
+        {/* Keep the retry button for convenience */}
         <button 
           className="mb-4 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
           onClick={() => {
