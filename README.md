@@ -17,7 +17,7 @@ A real-time AI-powered application that detects and counts squats using computer
 
 ## 🖥️ Live Demo
 
-Try the application live at: [https://your-app-url.com](https://your-app-url.com)
+Try the application live at: [ExerciseDetection](https://exercise-detection.vercel.app/)
 
 ## 🔧 Setup and Installation
 
