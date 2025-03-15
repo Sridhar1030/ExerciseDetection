@@ -4,6 +4,7 @@ import { Camera } from "@mediapipe/camera_utils";
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision";
+import * as tf from '@tensorflow/tfjs';
 
 // Add this constant at the top of your file, outside the component
 const POSE_LANDMARKS = {
@@ -42,6 +43,12 @@ const POSE_LANDMARKS = {
   32: 'right_foot_index'
 };
 
+// Constants for the exercise classification model
+const NUM_JOINTS = 33;
+const T = 100; // Sequence length
+const NUM_CLASSES = 5;
+const CLASS_NAMES = ['TreePose', 'Barbell Biceps Curl', 'Lunges', 'Push-Up', 'Squat'];
+
 export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -78,6 +85,245 @@ export default function App() {
 
   // Add webcamRunning as a ref so it's accessible outside the useEffect
   const webcamRunningRef = useRef(false);
+  
+  // Add state for exercise classification
+  const [predictedExercise, setPredictedExercise] = useState("No exercise detected");
+  const [confidence, setConfidence] = useState(0);
+
+  // Reference for storing the sequence of poses
+  const poseSequence = useRef([]);
+  
+  // Reference for the TFLite model
+  const tfliteModelRef = useRef(null);
+  
+  // Add these new state variables and refs
+  const [currentExercise, setCurrentExercise] = useState(null);
+  const switchCounterRef = useRef(0);
+  const confidenceThreshold = 0.6; // Minimum confidence to consider switching exercises
+  const switchFrames = 10; // Number of consecutive frames needed to switch exercise
+  
+  // Load TFLite model
+  useEffect(() => {
+    async function loadTFLiteModel() {
+      try {
+        // Load TensorFlow.js core
+        await tf.ready();
+        
+        // Dynamically load TFLite from CDN
+        const tfliteScript = document.createElement('script');
+        tfliteScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.8/dist/tf-tflite.min.js';
+        tfliteScript.async = true;
+        
+        tfliteScript.onload = async () => {
+          // Now window.tflite should be available
+          const tflite = window.tflite;
+          
+          // Register the TFLite backend
+          await tf.setBackend('wasm');
+          // Initialize WASM for TFLite
+          await tflite.setWasmPath(
+            'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.8/dist/'
+          );
+          
+          console.log("Loading TFLite model...");
+          const tfliteModel = await tflite.loadTFLiteModel('/models/stgcn_exercise.tflite');
+          tfliteModelRef.current = tfliteModel;
+          console.log("TFLite model loaded successfully!");
+        };
+        
+        document.body.appendChild(tfliteScript);
+      } catch (error) {
+        console.error("Error loading TFLite model:", error);
+      }
+    }
+    
+    loadTFLiteModel();
+    
+    // Cleanup
+    return () => {
+      const script = document.querySelector('script[src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.8/dist/tf-tflite.min.js"]');
+      if (script) {
+        document.body.removeChild(script);
+      }
+    };
+  }, []);
+
+  // Function to compute joint angles (converted from Python)
+  const computeJointAngles = (keypoints) => {
+    function angleBetweenVectors(v1, v2) {
+      const dotProduct = tf.sum(tf.mul(v1, v2), -1);
+      const normV1 = tf.norm(v1, 'euclidean', -1);
+      const normV2 = tf.norm(v2, 'euclidean', -1);
+      const cosTheta = tf.clipByValue(tf.div(dotProduct, tf.add(tf.mul(normV1, normV2), 1e-8)), -1.0, 1.0);
+      return tf.mul(tf.acos(cosTheta), 180.0 / Math.PI);
+    }
+
+    const coords = keypoints.slice([0, 0, 0], [T, NUM_JOINTS, 3]);
+    
+    const v1LeftElbow = tf.sub(coords.gather([11], 1), coords.gather([13], 1));
+    const v2LeftElbow = tf.sub(coords.gather([15], 1), coords.gather([13], 1));
+    const leftElbowAngle = angleBetweenVectors(v1LeftElbow, v2LeftElbow);
+
+    const v1RightElbow = tf.sub(coords.gather([12], 1), coords.gather([14], 1));
+    const v2RightElbow = tf.sub(coords.gather([16], 1), coords.gather([14], 1));
+    const rightElbowAngle = angleBetweenVectors(v1RightElbow, v2RightElbow);
+
+    const v1LeftKnee = tf.sub(coords.gather([23], 1), coords.gather([25], 1));
+    const v2LeftKnee = tf.sub(coords.gather([27], 1), coords.gather([25], 1));
+    const leftKneeAngle = angleBetweenVectors(v1LeftKnee, v2LeftKnee);
+
+    const v1RightKnee = tf.sub(coords.gather([24], 1), coords.gather([26], 1));
+    const v2RightKnee = tf.sub(coords.gather([28], 1), coords.gather([26], 1));
+    const rightKneeAngle = angleBetweenVectors(v1RightKnee, v2RightKnee);
+
+    const angles = tf.stack([leftElbowAngle, rightElbowAngle, leftKneeAngle, rightKneeAngle], -1);
+    return angles;
+  };
+
+  // Function to preprocess keypoints (converted from Python)
+  const preprocessKeypoints = (sequence) => {
+    return tf.tidy(() => {
+      let keypoints;
+      
+      if (sequence.length < T) {
+        // Pad the sequence if needed
+        const padding = Array(T - sequence.length).fill().map(() => 
+          Array(NUM_JOINTS).fill().map(() => [0, 0, 0, 0]));
+        keypoints = tf.tensor([...sequence, ...padding]);
+      } else {
+        // Take the last T frames
+        keypoints = tf.tensor(sequence.slice(-T));
+      }
+      
+      // Compute joint angles
+      const angles = computeJointAngles(keypoints);
+      
+      // Expand angles to match keypoints shape
+      const anglesExpanded = tf.tile(
+        tf.expandDims(angles, 2),
+        [1, 1, NUM_JOINTS, 1]
+      );
+      
+      // Concatenate keypoints and angles
+      const enhancedData = tf.concat([keypoints, anglesExpanded], -1);
+      
+      return enhancedData.expandDims(0); // Add batch dimension
+    });
+  };
+
+  // Function to validate if person is standing
+  const validateStanding = (landmarks) => {
+    if (!landmarks || landmarks.length < 29) return true; // Default to standing if no data
+    
+    // Helper function to compute angle between three points
+    const computeAngle = (p1, p2, p3) => {
+      // Convert landmarks to vectors
+      const v1 = {
+        x: p1.x - p2.x,
+        y: p1.y - p2.y,
+        z: p1.z - p2.z
+      };
+      
+      const v2 = {
+        x: p3.x - p2.x,
+        y: p3.y - p2.y,
+        z: p3.z - p2.z
+      };
+      
+      // Compute dot product
+      const dotProduct = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+      
+      // Compute magnitudes
+      const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y + v1.z * v1.z);
+      const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y + v2.z * v2.z);
+      
+      // Compute angle in degrees
+      const cosTheta = Math.min(Math.max(dotProduct / (mag1 * mag2), -1.0), 1.0);
+      const angle = Math.acos(cosTheta) * (180.0 / Math.PI);
+      
+      return angle;
+    };
+    
+    // Get angles for knees and hips
+    const leftKneeAngle = computeAngle(landmarks[23], landmarks[25], landmarks[27]);
+    const rightKneeAngle = computeAngle(landmarks[24], landmarks[26], landmarks[28]);
+    const leftHipAngle = computeAngle(landmarks[11], landmarks[23], landmarks[25]);
+    const rightHipAngle = computeAngle(landmarks[12], landmarks[24], landmarks[26]);
+    
+    const kneeThreshold = 160;
+    const hipThreshold = 160;
+    
+    const kneesStraight = leftKneeAngle > kneeThreshold && rightKneeAngle > kneeThreshold;
+    const hipsStraight = leftHipAngle > hipThreshold && rightHipAngle > hipThreshold;
+    
+    return kneesStraight || hipsStraight;
+  };
+  
+  // Function to handle exercise switching with debouncing
+  const handleExerciseSwitch = (predClass, confidence, landmarks) => {
+    const standing = validateStanding(landmarks);
+    console.log("Predicted class:", CLASS_NAMES[predClass]);
+    
+    if (standing) {
+      // Person is standing, don't change exercise
+      console.log("Standing detected");
+    } else if (currentExercise === null || CLASS_NAMES[predClass] !== currentExercise) {
+      // Different exercise detected
+      if (confidence > confidenceThreshold) {
+        switchCounterRef.current++;
+        console.log(`Switch counter: ${switchCounterRef.current}/${switchFrames}`);
+        
+        if (switchCounterRef.current >= switchFrames) {
+          // Switch exercise after consecutive consistent detections
+          setCurrentExercise(CLASS_NAMES[predClass]);
+          setPredictedExercise(CLASS_NAMES[predClass]);
+          console.log("============================ Switched to:", CLASS_NAMES[predClass]);
+          setExerciseCount(0); // Reset rep counter for new exercise
+          switchCounterRef.current = 0;
+        }
+      } else {
+        // Low confidence, reset counter
+        switchCounterRef.current = 0;
+      }
+    }
+  };
+  
+  // Update the exercise classification function to use the new logic
+  const runExerciseClassification = async () => {
+    if (!tfliteModelRef.current || poseSequence.current.length < T) return;
+    
+    try {
+      // Convert sequence to the format expected by the model
+      const input = preprocessKeypoints(poseSequence.current);
+      
+      // Run inference with TFLite model
+      const output = await tfliteModelRef.current.predict(input);
+      const values = await output.data();
+      
+      const classIdx = values.indexOf(Math.max(...values));
+      const conf = values[classIdx];
+      
+      // Get the most recent frame's landmarks for standing validation
+      const recentLandmarks = poseSequence.current[poseSequence.current.length - 1];
+      const landmarksForValidation = Array.from({ length: NUM_JOINTS }, (_, i) => ({
+        x: recentLandmarks[i][0],
+        y: recentLandmarks[i][1],
+        z: recentLandmarks[i][2],
+        visibility: recentLandmarks[i][3]
+      }));
+      
+      // Apply the new exercise switching logic
+      handleExerciseSwitch(classIdx, conf, landmarksForValidation);
+      
+      // Update confidence even if we don't immediately switch exercise
+      setConfidence(conf);
+      
+      input.dispose();
+      output.dispose();
+    } catch (error) {
+      console.error("Error during TFLite inference:", error);
+    }
+  };
 
   // Main effect for camera and pose detection
   useEffect(() => {
@@ -173,6 +419,67 @@ export default function App() {
       // Draw results
       drawResults(results);
       
+      // Process landmarks for exercise detection
+      if (results.landmarks && results.landmarks.length > 0) {
+        const landmarks = results.landmarks[0];
+        
+        // Create a frame of keypoints similar to the Python code
+        const keypoints = Array.from(landmarks).map(lm => [lm.x, lm.y, lm.z, lm.visibility]);
+        
+        // Add to sequence and maintain length
+        poseSequence.current.push(keypoints);
+        if (poseSequence.current.length > T) {
+          poseSequence.current.shift();
+        }
+        
+        // Update landmark data for display
+        const landmarkObj = {};
+        landmarks.forEach((landmark, i) => {
+          landmarkObj[i] = {
+            x: landmark.x.toFixed(3),
+            y: landmark.y.toFixed(3),
+            z: landmark.z.toFixed(3),
+            visibility: landmark.visibility.toFixed(3)
+          };
+        });
+        setLandmarkData(landmarkObj);
+        
+        // Run exercise classification when we have enough frames
+        if (poseSequence.current.length === T && tfliteModelRef.current) {
+          runExerciseClassification();
+        }
+        
+        // Process for squat detection
+        const hipY = (landmarks[23].y + landmarks[24].y) / 2;
+        
+        if (squatState.current.isCalibrating) {
+          // Calibration phase
+          squatState.current.calibrationFrames++;
+          squatState.current.calibrationSum += hipY;
+          
+          if (squatState.current.calibrationFrames >= SQUAT_SETTINGS.CALIBRATION_FRAMES) {
+            squatState.current.startY = squatState.current.calibrationSum / SQUAT_SETTINGS.CALIBRATION_FRAMES;
+            squatState.current.isCalibrating = false;
+          }
+        } else {
+          // Squat detection
+          const startY = squatState.current.startY;
+          const deltaY = hipY - startY;
+          
+          if (!squatState.current.isInSquat && deltaY > SQUAT_SETTINGS.THRESHOLD) {
+            squatState.current.isInSquat = true;
+          } else if (
+            squatState.current.isInSquat && 
+            deltaY < SQUAT_SETTINGS.THRESHOLD / 2 &&
+            performance.now() - squatState.current.lastSquatTime > SQUAT_SETTINGS.MIN_REP_TIME
+          ) {
+            squatState.current.isInSquat = false;
+            squatState.current.lastSquatTime = performance.now();
+            setExerciseCount(prev => prev + 1);
+          }
+        }
+      }
+      
       // Call the next frame
       requestAnimationFrame(predictWebcam);
     };
@@ -211,9 +518,7 @@ export default function App() {
   return (
     <div className="flex min-h-screen bg-gray-900 text-white p-4">
       <div className="flex flex-col items-center">
-        <h1 className="text-3xl font-bold mb-4">Squat Counter 🏋️‍♂️</h1>
-
-        {/* Remove the camera selection dropdown */}
+        <h1 className="text-3xl font-bold mb-4">Exercise Detector 🏋️‍♂️</h1>
 
         {/* Fixed size container */}
         <div 
@@ -256,19 +561,31 @@ export default function App() {
         </div>
         
         <div className="mt-4 text-center">
-          <p className="text-3xl font-bold">Squats: {exerciseCount}</p>
+          <p className="text-3xl font-bold">
+            {currentExercise === 'Squat' ? `Squats: ${exerciseCount}` : `${currentExercise || 'No exercise'}: ${exerciseCount}`}
+          </p>
           <p className="text-xl">
             Status: {squatState.current.isInSquat ? "⬇️ Squatting" : "⬆️ Standing"}
           </p>
           {squatState.current.isCalibrating && (
             <p className="text-yellow-400">Calibrating... Please stand still</p>
           )}
-          <p className="text-3xl font-bold">Current Pose: {currentPose}</p>
+          
+          {/* Exercise classification display */}
+          <div className="mt-4 p-4 bg-gray-800 rounded-lg">
+            <p className="text-2xl font-bold">Detected Exercise</p>
+            <p className="text-3xl font-bold text-green-400">
+              {currentExercise || "No exercise detected"}
+            </p>
+            <p className="text-md">
+              Confidence: {(confidence * 100).toFixed(1)}%
+            </p>
+          </div>
         </div>
 
         {/* Keep the retry button for convenience */}
         <button 
-          className="mb-4 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+          className="mt-4 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
           onClick={() => {
             if (videoRef.current && videoRef.current.srcObject) {
               videoRef.current.srcObject.getTracks().forEach(track => track.stop());
