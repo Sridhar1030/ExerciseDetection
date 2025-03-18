@@ -115,14 +115,14 @@ const Test2 = () => {
                 keypoints[i] = [0, 0, 0, 0]; // Default all to zero
             }
             
-            // Only populate with actual values if they exist and have good visibility
+            // Populate with actual values if they exist and have good visibility
             for (let i = 0; i < 33; i++) {
                 if (landmarks[i]) {
                     const lm = landmarks[i];
                     const visibility = lm.visibility || 0;
                     
-                    // Only use landmarks with good visibility (>0.5)
-                    if (visibility > 0.5) {
+                    // Only use landmarks with reasonable visibility
+                    if (visibility > 0.3) {
                         keypoints[i] = [
                             lm.x || 0,
                             lm.y || 0, 
@@ -144,6 +144,21 @@ const Test2 = () => {
             // If we exceed capacity, remove the oldest frame
             if (keypointsQueue.current.length > MAX_SEQUENCE_LENGTH) {
                 keypointsQueue.current.shift();
+            }
+            
+            // Debug check - log a sample of keypoints periodically
+            if (keypointsQueue.current.length % 10 === 0) {
+                console.log(`Queue size: ${keypointsQueue.current.length}/${MAX_SEQUENCE_LENGTH}`);
+                // Log sample of non-zero keypoints to verify data
+                const nonZeroCount = keypointsQueue.current[keypointsQueue.current.length-1]
+                    .filter(kp => kp[0] !== 0 || kp[1] !== 0 || kp[2] !== 0)
+                    .length;
+                console.log(`Latest frame has ${nonZeroCount}/33 non-zero keypoints`);
+            }
+            
+            // Only log when we have exactly 50 frames
+            if (keypointsQueue.current.length === MAX_SEQUENCE_LENGTH) {
+                console.log("Full sequence of 50 frames collected. Processing input...");
             }
         }
 
@@ -209,10 +224,17 @@ const Test2 = () => {
                         const predClass = argMax(outputData);
                         const confidence = outputData[predClass];
                         
+                        // Map numeric class to exercise name
+                        const exerciseNames = ['TreePose', 'Lunges', 'Push-Up', 'Squat'];
+                        
+                        // Log all prediction values
+                        console.log("Prediction values for all exercises:");
+                        exerciseNames.forEach((name, index) => {
+                            console.log(`${name}: ${(outputData[index] * 100).toFixed(2)}%`);
+                        });
+                        
                         // Only update UI for confident predictions
                         if (confidence > 0.4) {
-                            // Map numeric class to exercise name
-                            const exerciseNames = ['TreePose', 'Lunges', 'Push-Up', 'Squat'];
                             const exerciseName = exerciseNames[predClass] || `Exercise ${predClass}`;
                             
                             console.log(`TFLite prediction: ${exerciseName} (class ${predClass}), Confidence: ${(confidence * 100).toFixed(1)}%`);
