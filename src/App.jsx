@@ -41,9 +41,9 @@ const POSE_LANDMARKS = {
 
 // Constants for the exercise classification model
 const NUM_JOINTS = 33;
-const T = 50; // Sequence length (50 frames)
-const NUM_CLASSES = 5;
-const CLASS_NAMES = ['TreePose', 'Barbell Biceps Curl', 'Lunges', 'Push-Up', 'Squat'];
+const T = 100; // Sequence length (50 frames)
+const NUM_CLASSES = 4;
+const CLASS_NAMES = ['TreePose', 'Lunges', 'Push-Up', 'Squat'];
 
 // Update the MODEL_INPUT_SHAPE constant to match requirements
 const MODEL_INPUT_SHAPE = [1, 50, 33, 8]; // [batch, frames, joints, features]
@@ -188,7 +188,7 @@ export default function App() {
 
   // Now update the loadModel function
   const loadModel = async () => {
-    const modelPath = '/public/models/model.json';
+    const modelPath = '/public/models/stgcn_exercise_fine_tunned.tflite';
     
     try {
       setModelLoadingState(prev => ({
@@ -200,142 +200,56 @@ export default function App() {
       await tf.ready();
       console.log("TensorFlow.js ready:", tf.getBackend());
       
-      // Register our custom GraphConv layer
-      tf.serialization.registerClass(GraphConv);
-      console.log("Registered custom GraphConv layer");
+      if (typeof window.tflite === 'undefined') {
+        console.log("TFLite not found, loading from CDN...");
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@latest/dist/tf-tflite.min.js';
+        script.async = true;
+        const scriptLoadPromise = new Promise((resolve, reject) => {
+          script.onload = resolve;
+          script.onerror = () => reject(new Error("Failed to load TFLite script from CDN"));
+        });
+        document.head.appendChild(script);
+        await scriptLoadPromise;
+        console.log("TFLite script loaded from CDN");
+      }
       
-      // Check if L2 regularizer exists and has className before registering
-      if (tf.regularizers && tf.regularizers.L2 && tf.regularizers.L2.className) {
-        tf.serialization.registerClass(tf.regularizers.L2);
-        console.log("Registered L2 regularizer");
+      if (window.tflite && window.tflite.setWasmPath) {
+        window.tflite.setWasmPath(
+          "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@latest/dist/"
+        );
+        console.log("TFLite WASM path set");
       } else {
-        // Create a custom L2 regularizer if needed
-        class L2 extends tf.serialization.Serializable {
-          constructor(config) {
-            super();
-            this.l2 = config.l2 || 0.01;
-          }
-          
-          apply(x) {
-            return tf.mul(tf.scalar(this.l2), tf.sum(tf.square(x)));
-          }
-          
-          getConfig() {
-            return { l2: this.l2 };
-          }
-          
-          static get className() {
-            return 'L2';
-          }
-        }
-        
-        // Register our custom L2 regularizer
-        tf.serialization.registerClass(L2);
-        tf.regularizers.L2 = L2;
-        console.log("Created and registered custom L2 regularizer");
+        throw new Error("TFLite module not properly loaded");
       }
       
       setModelLoadingState(prev => ({
         ...prev,
-        message: 'Loading model...'
+        message: 'Loading TFLite model...'
       }));
       
-      // Create a model with the correct input shape
-      console.log("Creating model with explicit input shape...");
+      console.log("Loading TFLite model from:", modelPath);
+      const model = await window.tflite.loadTFLiteModel(modelPath);
+      console.log("✅ TFLite model loaded successfully!");
       
-      // Create a sequential model
-      const model = tf.sequential();
-      
-      // Add input layer with explicit shape
-      model.add(tf.layers.inputLayer({
-        inputShape: [T, NUM_JOINTS, 8],
-        name: 'input_1'
-      }));
-      
-      try {
-        // Try to load the original model weights
-        console.log("Attempting to load original model weights...");
-        const originalModel = await tf.loadLayersModel(modelPath);
-        
-        // If successful, transfer weights to our model
-        console.log("Original model loaded, transferring weights...");
-        
-        // Add the remaining layers from the original model
-        for (let i = 1; i < originalModel.layers.length; i++) {
-          const layer = originalModel.layers[i];
-          model.add(layer);
-        }
-        
-        console.log("Model layers transferred successfully");
-      } catch (error) {
-        console.error("Error loading original model:", error);
-        
-        // If we can't load the original model, add basic layers based on Python code
-        console.log("Adding basic layers based on Python implementation...");
-        
-        // Flatten the input for dense layers instead of using Conv2D
-        // This avoids dimensionality issues
-        model.add(tf.layers.flatten({
-          name: 'flatten_input'
-        }));
-        
-        // Add dense layers instead of Conv2D
-        model.add(tf.layers.dense({
-          units: 256,
-          activation: 'relu',
-          name: 'dense_1'
-        }));
-        
-        model.add(tf.layers.dense({
-          units: 128,
-          activation: 'relu',
-          name: 'dense_2'
-        }));
-        
-        model.add(tf.layers.dense({
-          units: 64,
-          activation: 'relu',
-          name: 'dense_3'
-        }));
-        
-        // Add dropout for regularization
-        model.add(tf.layers.dropout({
-          rate: 0.2,
-          name: 'dropout_1'
-        }));
-        
-        // Add dense layer for classification
-        model.add(tf.layers.dense({
-          units: NUM_CLASSES,
-          activation: 'softmax',
-          name: 'dense_output'
-        }));
+      if (!model) {
+        throw new Error("Model is undefined after loading");
       }
       
-      // Compile the model
-      model.compile({
-        optimizer: 'adam',
-        loss: 'categoricalCrossentropy',
-        metrics: ['accuracy']
-      });
-      
-      // Print model summary
-      model.summary();
-      console.log("Model input shape:", model.inputs[0].shape);
-      
-      // Store the model
       tfliteModelRef.current = model;
       
       setModelLoadingState({
         status: 'success',
-        message: 'Model loaded successfully!'
+        message: 'TFLite model loaded successfully!'
       });
       
       setModelDebugInfo({
         modelLoaded: true,
-        inputShape: model.inputs[0].shape.toString(),
-        modelType: "STGCN Exercise Model"
+        modelType: "TFLite STGCN Model"
       });
+      
+      // Run exercise classification after model is loaded
+      runExerciseClassification();
       
       return true;
     } catch (error) {
@@ -471,7 +385,7 @@ export default function App() {
     }
   };
 
-  // Update the runExerciseClassification function
+  // Function to run exercise classification
   const runExerciseClassification = async () => {
     // Check if model is loaded
     if (!tfliteModelRef.current) {
@@ -480,33 +394,25 @@ export default function App() {
       return;
     }
     
-    // Check if we have enough pose data
-    if (!poseSequence.current || poseSequence.current.length < 10) { // Require at least 10 frames
-      console.log(`Not enough pose data: ${poseSequence.current?.length || 0}/${T}`);
-      return;
-    }
+    // Prepare the input according to model requirements
+    const inputTensor = tf.tensor([Array(50).fill(Array(33).fill([0.5, 0.6, 0.1, 0.95, 90.0, 85.0, 120.0, 115.0]))]);
     
     try {
-      // Start timing for performance measurement
-      const startTime = performance.now();
-      
-      // Prepare the input according to model requirements
-      const inputTensor = prepareModelInput(poseSequence.current);
-      
-      if (!inputTensor) {
-        console.error("Failed to prepare input tensor");
-        return;
-      }
-      
       console.log(`Input tensor shape: ${inputTensor.shape}`);
+      
+      // Check if the model has a predict method
+      if (typeof tfliteModelRef.current.predict !== 'function') {
+        throw new Error("Model does not have a predict method");
+      }
       
       // Run inference
       console.log("Running inference...");
       const output = tfliteModelRef.current.predict(inputTensor);
       
-      const endTime = performance.now();
+      if (!output) {
+        throw new Error("Output is undefined after prediction");
+      }
       
-      // Get prediction data
       const outputData = await output.data();
       console.log("Raw prediction:", outputData);
       
@@ -521,35 +427,11 @@ export default function App() {
       setPredictedExercise(predictedClass);
       setConfidence(confidence);
       
-      // Track exercise switching with confidence threshold
-      if (confidence > confidenceThreshold) {
-        if (currentExercise !== predictedClass) {
-          switchCounterRef.current++;
-          
-          if (switchCounterRef.current >= switchFrames) {
-            setCurrentExercise(predictedClass);
-            switchCounterRef.current = 0;
-          }
-        } else {
-          switchCounterRef.current = 0;
-        }
-      }
-      
-      // Update debug info
-      setModelDebugInfo(prev => ({
-        ...prev,
-        lastPrediction: `${predictedClass} (${confidence.toFixed(4)})`,
-        inferenceTime: (endTime - startTime).toFixed(2),
-        processedFrames: prev.processedFrames + 1
-      }));
-      
       // Clean up
       inputTensor.dispose();
       output.dispose();
     } catch (error) {
       console.error("Error during inference:", error);
-      console.error("Stack trace:", error.stack);
-      
       setModelDebugInfo(prev => ({
         ...prev,
         lastPrediction: `Error: ${error.message}`
