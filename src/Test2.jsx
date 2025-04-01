@@ -59,7 +59,7 @@ const Test2 = () => {
 
                 // Test the model with zeros to verify it works
                 const inputTensor = tf.zeros([1, 50, 33, 8]); // Shape needed by the model
-                console.log("Created test input tensor, shape:", inputTensor.shape);
+                // console.log("Created test input tensor, shape:", inputTensor.shape);
                 
                 const output = model.predict(inputTensor);
                 console.log("Model prediction successful, output type:", typeof output);
@@ -89,7 +89,7 @@ const Test2 = () => {
                     console.log("Full sequence of 50 frames collected. Processing input...");
                     prepareInputAndInvoke(result);
                 } else {
-                    console.log(`Building sequence: ${keypointsQueue.current.length}/${MAX_SEQUENCE_LENGTH} frames`);
+                    // console.log(`Building sequence: ${keypointsQueue.current.length}/${MAX_SEQUENCE_LENGTH} frames`);
                 }
             }
         }
@@ -148,12 +148,12 @@ const Test2 = () => {
             
             // Debug check - log a sample of keypoints periodically
             if (keypointsQueue.current.length % 10 === 0) {
-                console.log(`Queue size: ${keypointsQueue.current.length}/${MAX_SEQUENCE_LENGTH}`);
+                // console.log(`Queue size: ${keypointsQueue.current.length}/${MAX_SEQUENCE_LENGTH}`);
                 // Log sample of non-zero keypoints to verify data
                 const nonZeroCount = keypointsQueue.current[keypointsQueue.current.length-1]
                     .filter(kp => kp[0] !== 0 || kp[1] !== 0 || kp[2] !== 0)
                     .length;
-                console.log(`Latest frame has ${nonZeroCount}/33 non-zero keypoints`);
+                // console.log(`Latest frame has ${nonZeroCount}/33 non-zero keypoints`);
             }
             
             // Only log when we have exactly 50 frames
@@ -178,7 +178,7 @@ const Test2 = () => {
                 
                 // Double-check we have exactly 50 frames
                 if (keypointsQueue.current.length !== MAX_SEQUENCE_LENGTH) {
-                    console.log(`Waiting for complete sequence, current length: ${keypointsQueue.current.length}/${MAX_SEQUENCE_LENGTH}`);
+                    // console.log(`Waiting for complete sequence, current length: ${keypointsQueue.current.length}/${MAX_SEQUENCE_LENGTH}`);
                     return;
                 }
                 
@@ -213,7 +213,7 @@ const Test2 = () => {
                     
                     // Create tensor with shape [1, 50, 33, 8]
                     const inputTensor = tf.tensor(augmentedData).expandDims(0);
-                    console.log("Input tensor shape:", inputTensor.shape);
+                    // console.log("Input tensor shape:", inputTensor.shape);
                     
                     // Make prediction with the TFLite model
                     const output = model.predict(inputTensor);
@@ -230,14 +230,14 @@ const Test2 = () => {
                         // Log all prediction values
                         console.log("Prediction values for all exercises:");
                         exerciseNames.forEach((name, index) => {
-                            console.log(`${name}: ${(outputData[index] * 100).toFixed(2)}%`);
+                            // console.log(`${name}: ${(outputData[index] * 100).toFixed(2)}%`);
                         });
                         
                         // Only update UI for confident predictions
                         if (confidence > 0.4) {
                             const exerciseName = exerciseNames[predClass] || `Exercise ${predClass}`;
                             
-                            console.log(`TFLite prediction: ${exerciseName} (class ${predClass}), Confidence: ${(confidence * 100).toFixed(1)}%`);
+                            // console.log(`TFLite prediction: ${exerciseName} (class ${predClass}), Confidence: ${(confidence * 100).toFixed(1)}%`);
                             
                             // Update UI with results
                             handleExerciseSession(exerciseName, confidence);
@@ -245,7 +245,7 @@ const Test2 = () => {
                         
                         // IMPORTANT: Clear the queue after prediction to reduce memory pressure
                         keypointsQueue.current = [];
-                        console.log("Cleared frame buffer after prediction. Building new sequence...");
+                        // console.log("Cleared frame buffer after prediction. Building new sequence...");
                     });
                 });
             } catch (error) {
@@ -378,7 +378,7 @@ const Test2 = () => {
             setLandmarksDetected(true);
             
             // Log landmarks received from Detection component
-            console.log("Landmarks received in handlePoseLandmarksReceived:", results.landmarks);
+            // console.log("Landmarks received in handlePoseLandmarksReceived:", results.landmarks);
 
             // Send landmarks to parent component for TFLite model processing
             if (window.onPoseLandmarksReceived) {

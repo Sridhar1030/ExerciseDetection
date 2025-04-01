@@ -79,7 +79,7 @@ const Detection = ({ onPoseLandmarksReceived }) => {
                     poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
                         baseOptions: {
                             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-                            delegate: "CPU" // Fallback to CPU
+                            delegate: "GPU" // Fallback to CPU
                         },
                         runningMode: "VIDEO",
                         numPoses: 1,
@@ -126,7 +126,7 @@ const Detection = ({ onPoseLandmarksReceived }) => {
                                             const videoWidth = videoRef.current.videoWidth;
                                             const videoHeight = videoRef.current.videoHeight;
                                             
-                                            console.log(`Video dimensions: ${videoWidth}x${videoHeight}`);
+                                            // console.log(`Video dimensions: ${videoWidth}x${videoHeight}`);
                                             
                                             if (videoWidth > 0 && videoHeight > 0 && canvasRef.current) {
                                                 canvasRef.current.width = videoWidth;
