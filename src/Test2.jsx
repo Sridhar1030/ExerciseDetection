@@ -223,7 +223,7 @@ const Test2 = () => {
                     // console.log("Input tensor shape:", inputTensor.shape);
                     
                     // Make prediction with the TFLite model
-                    const output =predict(inputTensor);
+                    const output = model.predict(inputTensor);
                     
                     // Get output data as array
                     output.data().then(outputData => {
