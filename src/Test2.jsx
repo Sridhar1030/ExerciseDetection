@@ -50,7 +50,8 @@ const Test2 = () => {
                 // Load the actual TFLite model
                 console.log("Loading TFLite model from:", "http://localhost:5173/models/stgcn_exercise_fine_tunned.tflite");
                 model = await tflite.loadTFLiteModel(
-                    "http://localhost:5173/models/stgcn_exercise_fine_tunned.tflite"
+                    // "http://localhost:5173/models/stgcn_exercise_fine_tunned.tflite"
+                    "https://exercise-detection.vercel.app/models/stgcn_exercise_fine_tunned.tflite"
                 );
                 
                 // Verify it's a real TFLite model
@@ -222,7 +223,7 @@ const Test2 = () => {
                     // console.log("Input tensor shape:", inputTensor.shape);
                     
                     // Make prediction with the TFLite model
-                    const output = model.predict(inputTensor);
+                    const output =predict(inputTensor);
                     
                     // Get output data as array
                     output.data().then(outputData => {
