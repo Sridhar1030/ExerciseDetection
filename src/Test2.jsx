@@ -39,8 +39,21 @@ const Test2 = () => {
                 tf = window.tf;
                 tflite = window.tflite;
                 
+                // Set WebGL flags before tf.ready()
+                await tf.setBackend('webgl');
+                tf.env().set('WEBGL_VERSION', 2);  // Try to use WebGL 2.0
+                tf.env().set('WEBGL_FORCE_F16_TEXTURES', false);
+                tf.env().set('WEBGL_PACK', true);
+                
                 await tf.ready();
                 console.log("TensorFlow.js ready, backend:", tf.getBackend());
+                
+                // Check if WebGL is properly initialized
+                const backend = tf.getBackend();
+                if (backend !== 'webgl') {
+                    console.warn('WebGL backend not initialized, falling back to CPU');
+                    await tf.setBackend('cpu');
+                }
                 
                 tflite.setWasmPath(
                     "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@latest/dist/"
