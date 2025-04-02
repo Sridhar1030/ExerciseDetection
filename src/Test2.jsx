@@ -166,6 +166,12 @@ const Test2 = () => {
             try {
                 if (!model || !tf) {
                     console.error("Model or TensorFlow not loaded");
+                    if(!model) {
+                        console.error("Model is not loaded yet");
+                    }
+                    if(!tf) {
+                        console.error("TensorFlow is not loaded yet");
+                    }
                     return;
                 }
                 
