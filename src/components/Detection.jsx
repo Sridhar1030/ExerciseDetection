@@ -8,6 +8,7 @@ const Detection = ({ onPoseLandmarksReceived }) => {
     const webcamRunningRef = useRef(false);
     const frameCountRef = useRef(0);
     const errorCountRef = useRef(0);
+    const lastValidResultsRef = useRef(null);
 
     useEffect(() => {
         if (!videoRef.current || !canvasRef.current) return;
@@ -20,14 +21,16 @@ const Detection = ({ onPoseLandmarksReceived }) => {
         const drawResults = (results) => {
             if (!canvasRef.current) return;
             
-            // Clear with transparent background
+            // Always clear the canvas first, regardless of landmarks
             canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
-            // Only try to draw landmarks if they exist
+            
+            // If we have valid landmarks, update our reference and draw them
             if (results && results.landmarks && results.landmarks.length > 0) {
+                // Store as last valid results
+                lastValidResultsRef.current = results;
+                
                 try {
                     for (const landmarks of results.landmarks) {
-                        // Wrap drawing operations in try-catch to prevent crashes
                         try {
                             drawingUtils.drawConnectors(
                                 landmarks,
@@ -38,13 +41,36 @@ const Detection = ({ onPoseLandmarksReceived }) => {
                                 landmarks
                             );
                         } catch (error) {
-                            // Don't throw error to UI - just log it
                             console.warn("Drawing error:", error.message);
                         }
                     }
                 } catch (error) {
                     console.warn("Error in draw results:", error.message);
-                    // Continue without breaking the rendering loop
+                }
+            } 
+            // If no landmarks but we have previous valid results, use those instead
+            // This creates a "freezing" effect instead of disappearing
+            else if (lastValidResultsRef.current && lastValidResultsRef.current.landmarks) {
+                try {
+                    for (const landmarks of lastValidResultsRef.current.landmarks) {
+                        // Draw with slightly faded color to indicate it's from previous frame
+                        try {
+                            drawingUtils.drawConnectors(
+                                landmarks,
+                                PoseLandmarker.POSE_CONNECTIONS,
+                                {color: 'rgba(255, 255, 255, 0.5)'} // More transparent to indicate old data
+                            );
+                            
+                            drawingUtils.drawLandmarks(
+                                landmarks,
+                                {color: 'rgba(0, 255, 0, 0.5)'} // More transparent landmarks
+                            );
+                        } catch (error) {
+                            console.warn("Drawing previous landmarks error:", error.message);
+                        }
+                    }
+                } catch (error) {
+                    console.warn("Error in draw previous results:", error.message);
                 }
             }
         };
@@ -63,9 +89,9 @@ const Detection = ({ onPoseLandmarksReceived }) => {
                     
                     runningMode: "VIDEO",
                     numPoses: 1,
-                    minPoseDetectionConfidence: 0.5,
-                    minPosePresenceConfidence: 0.5,
-                    minTrackingConfidence: 0.5
+                    minPoseDetectionConfidence: 0.2,
+                    minPosePresenceConfidence: 0.2,
+                    minTrackingConfidence: 0.2
                 });
 
                 enableCam();
@@ -84,9 +110,9 @@ const Detection = ({ onPoseLandmarksReceived }) => {
                         },
                         runningMode: "VIDEO",
                         numPoses: 1,
-                        minPoseDetectionConfidence: 0.5,
-                        minPosePresenceConfidence: 0.5,
-                        minTrackingConfidence: 0.5
+                        minPoseDetectionConfidence: 0.2,
+                        minPosePresenceConfidence: 0.2,
+                        minTrackingConfidence: 0.2
                     });
     
                     enableCam();
@@ -100,8 +126,8 @@ const Detection = ({ onPoseLandmarksReceived }) => {
             if (!webcamRunningRef.current) {
                 navigator.mediaDevices.getUserMedia({
                     video: {
-                        width: { ideal: 640, min: 320 },
-                        height: { ideal: 480, min: 240 },
+                        width: { ideal: 480 },
+                        height: { ideal: 480 },
                         frameRate: { ideal: 30 }
                     }
                 })
@@ -127,11 +153,35 @@ const Detection = ({ onPoseLandmarksReceived }) => {
                                             const videoWidth = videoRef.current.videoWidth;
                                             const videoHeight = videoRef.current.videoHeight;
                                             
-                                            // console.log(`Video dimensions: ${videoWidth}x${videoHeight}`);
+                                            console.log(`Video dimensions: ${videoWidth}x${videoHeight}`);
                                             
                                             if (videoWidth > 0 && videoHeight > 0 && canvasRef.current) {
+                                                // Set exact dimensions to match video
                                                 canvasRef.current.width = videoWidth;
                                                 canvasRef.current.height = videoHeight;
+                                                
+                                                // Calculate the correct positioning
+                                                const containerWidth = 640; // Your container width
+                                                const containerHeight = 480; // Your container height
+                                                
+                                                // Calculate scaling and positioning
+                                                const scaleX = containerWidth / videoWidth;
+                                                const scaleY = containerHeight / videoHeight;
+                                                const scale = Math.min(scaleX, scaleY);
+                                                
+                                                // Set the canvas style with exact positioning
+                                                canvasRef.current.style.width = `${videoWidth}px`;
+                                                canvasRef.current.style.height = `${videoHeight}px`;
+                                                canvasRef.current.style.position = 'absolute';
+                                                canvasRef.current.style.left = '50%';
+                                                canvasRef.current.style.top = '50%';
+                                                canvasRef.current.style.transform = `translate(-50%, -50%) scaleX(-1) scale(${scale})`;
+                                                
+                                                // Match video positioning
+                                                videoRef.current.style.position = 'absolute';
+                                                videoRef.current.style.left = '50%';
+                                                videoRef.current.style.top = '50%';
+                                                videoRef.current.style.transform = `translate(-50%, -50%) scaleX(-1) scale(${scale})`;
                                                 
                                                 webcamRunningRef.current = true;
                                                 
@@ -198,21 +248,31 @@ const Detection = ({ onPoseLandmarksReceived }) => {
             }
 
             try {
-                // Use stronger throttling for pose detection to reduce CPU/GPU load
-                // Process every 3rd frame (adjustable based on performance)
-                frameCountRef.current = (frameCountRef.current + 1) % 3;
+                // Add basic throttling back but much lighter (3 out of 4 frames)
+                // This helps reduce processing load without causing noticeable stutters
+                frameCountRef.current = (frameCountRef.current + 1) % 4;
                 
-                if (frameCountRef.current === 0) {
-                    let results;
-                    
+                // Always redraw existing pose to maintain continuity
+                // This ensures something is always drawn
+                if (lastValidResultsRef.current) {
+                    drawResults(lastValidResultsRef.current);
+                }
+                
+                // Only do detection on 3 out of 4 frames
+                if (frameCountRef.current < 3) {
                     try {
-                        results = poseLandmarker.detectForVideo(videoRef.current, startTimeMs);
+                        // Create a detection options object with image dimensions
+                        const detectionOptions = {
+                            imageWidth: videoRef.current.videoWidth,
+                            imageHeight: videoRef.current.videoHeight
+                        };
                         
-                        // Always draw results to maintain visual feedback
-                        drawResults(results);
+                        // Pass the options to detectForVideo
+                        const results = poseLandmarker.detectForVideo(videoRef.current, startTimeMs, detectionOptions);
                         
-                        // Only update landmarks and state if we have valid landmarks
-                        if (results.landmarks && results.landmarks.length > 0) {
+                        // Draw results only if we have landmarks
+                        if (results && results.landmarks && results.landmarks.length > 0) {
+                            drawResults(results);
                             setLandmarksDetected(true);
                             
                             // Process landmarks before sending them
@@ -257,10 +317,6 @@ const Detection = ({ onPoseLandmarksReceived }) => {
                         console.error("Detection error:", detectionError);
                         errorCountRef.current++;
                     }
-                } else {
-                    // On frames we skip detection for, still keep video visible
-                    // Just draw the previous results to maintain visual continuity
-                    // This gives smooth video while reducing computation load
                 }
             } catch (error) {
                 console.error("Error in main detection loop:", error);
@@ -296,63 +352,98 @@ const Detection = ({ onPoseLandmarksReceived }) => {
         };
     }, [onPoseLandmarksReceived]);
 
+    // Add a useEffect to check video stream health
+    useEffect(() => {
+        // Check video stream health periodically
+        const videoHealthCheck = setInterval(() => {
+            if (videoRef.current && webcamRunningRef.current) {
+                if (videoRef.current.readyState < 2 || videoRef.current.paused) {
+                    console.warn("Video stream appears to be inactive, restarting...");
+                    
+                    // Try to restart the stream
+                    if (videoRef.current.srcObject) {
+                        const tracks = videoRef.current.srcObject.getTracks();
+                        if (tracks.length === 0 || tracks[0].readyState !== "live") {
+                            console.log("Restarting camera due to inactive stream");
+                            webcamRunningRef.current = false;
+                            setTimeout(() => {
+                                enableCam();
+                            }, 500);
+                        } else {
+                            // Stream exists but video is paused, try to play
+                            videoRef.current.play().catch(e => {
+                                console.warn("Could not restart playback:", e);
+                            });
+                        }
+                    }
+                }
+            }
+        }, 3000); // Check every 3 seconds
+        
+        return () => {
+            clearInterval(videoHealthCheck);
+        };
+    }, []);
+
     return (
-        <div className="detection-container">
+        <div 
+            className="detection-container"
+            style={{
+                position: 'relative',
+                width: '640px',
+                height: '480px',
+                overflow: 'hidden',
+                border: '2px solid #333',
+                margin: '0 auto',
+                backgroundColor: '#000', // Add background color to container
+            }}
+        >
+            <video
+                ref={videoRef}
+                style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%) scaleX(-1)',
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    backgroundColor: 'transparent',
+                }}
+                muted
+                playsInline
+            />
+
+            <canvas
+                ref={canvasRef}
+                style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%) scaleX(-1)',
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    zIndex: 999,
+                    backgroundColor: 'transparent',
+                }}
+            />
+
+            {/* Status indicator */}
             <div
                 style={{
-                    position: 'relative',
-                    width: '640px',
-                    height: '480px',
-                    overflow: 'hidden',
-                    border: '2px solid #333',
-                    margin: '0 auto'
+                    position: 'absolute',
+                    bottom: 10,
+                    left: 10,
+                    background: 'rgba(0,0,0,0.7)',
+                    padding: '5px 10px',
+                    borderRadius: '5px',
+                    color: 'white',
+                    fontSize: '12px',
+                    zIndex: 1000
                 }}
             >
-                <video
-                    ref={videoRef}
-                    style={{
-                        position: 'absolute',
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'contain',
-                        backgroundColor: '#000',
-                        transform: 'scaleX(-1)'
-                    }}
-                    muted
-                    playsInline
-                />
-
-                <canvas
-                    ref={canvasRef}
-                    style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        height: '100%',
-                        zIndex: 999,
-                        transform: 'scaleX(-1)'
-                    }}
-                />
-
-                {/* Status indicator */}
-                <div
-                    style={{
-                        position: 'absolute',
-                        bottom: 10,
-                        left: 10,
-                        background: 'rgba(0,0,0,0.7)',
-                        padding: '5px 10px',
-                        borderRadius: '5px',
-                        color: 'white',
-                        fontSize: '12px',
-                        zIndex: 1000
-                    }}
-                >
-                    {landmarksDetected ?
-                        "✅ Pose Detected" :
-                        "⏳ Waiting for pose..."}
-                </div>
+                {landmarksDetected ?
+                    "✅ Pose Detected" :
+                    "⏳ Waiting for pose..."}
             </div>
         </div>
     );
